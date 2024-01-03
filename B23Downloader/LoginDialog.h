@@ -35,7 +35,7 @@ private:
     void showRefreshButton();
     void hideRefreshButton();
 
-    QString oauthKey;
+    QString qrcode_key;
     int polledTimes = 0;
     QTimer *pollTimer;
     QLabel *qrCodeLabel;

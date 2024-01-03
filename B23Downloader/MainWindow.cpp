@@ -125,7 +125,8 @@ void MainWindow::startGetUserInfo()
         return;
     }
     unameLabel->setText("登录中...", Qt::gray);
-    auto rqst = Network::Bili::Request(QUrl("https://api.bilibili.com/nav"));
+    // auto rqst = Network::Bili::Request(QUrl("https://api.bilibili.com/nav"));
+    auto rqst = Network::Bili::Request(QUrl("https://api.bilibili.com/x/web-interface/nav"));
     rqst.setTransferTimeout(GetUserInfoTimeout);
     uinfoReply = Network::accessManager()->get(rqst);;
     connect(uinfoReply, &QNetworkReply::finished, this, &MainWindow::getUserInfoFinished);

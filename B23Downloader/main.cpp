@@ -1,7 +1,6 @@
 #include "MainWindow.h"
 #include <QApplication>
 #include <QSharedMemory>
-
 #ifdef Q_OS_WIN // ensure single application instance at Windows
 
 #include <windows.h>
@@ -19,6 +18,20 @@ void raiseWindow(const HWND hWnd)
 
 int main(int argc, char *argv[])
 {
+    char current_proc_path[MAX_PATH] = { 0 };
+    ::GetModuleFileNameA(NULL, current_proc_path, MAX_PATH);
+    std::string current_proc_dir;
+    current_proc_dir.append(current_proc_path);
+    int separator_pos = current_proc_dir.rfind('\\');
+
+    if (std::string::npos == separator_pos)
+    {
+        current_proc_dir = "";
+    }
+    else {
+        current_proc_dir = current_proc_dir.substr(0, separator_pos);
+    }
+    SetCurrentDirectoryA(current_proc_dir.c_str());
     QApplication a(argc, argv);
 
     QSharedMemory sharedMem("B23Dld-HWND");

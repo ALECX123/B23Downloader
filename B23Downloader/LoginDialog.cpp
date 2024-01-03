@@ -113,7 +113,8 @@ QJsonValue LoginDialog::getReplyData()
 
 void LoginDialog::startGetLoginUrl()
 {
-    httpReply = Network::Bili::get("https://passport.bilibili.com/qrcode/getLoginUrl");
+    //httpReply = Network::Bili::get("https://passport.bilibili.com/qrcode/getLoginUrl");
+    httpReply = Network::Bili::get("https://passport.bilibili.com/x/passport-login/web/qrcode/generate");
     connect(httpReply, &QNetworkReply::finished, this, &LoginDialog::getLoginUrlFinished);
 }
 
@@ -126,7 +127,7 @@ void LoginDialog::getLoginUrlFinished()
     }
 
     QString url = data["url"].toString();
-    oauthKey = data["oauthKey"].toString();
+    qrcode_key = data["qrcode_key"].toString();
     setQrCode(url);
     tipLabel->setText(ScanToLoginTip);
     polledTimes = 0;
@@ -135,8 +136,9 @@ void LoginDialog::getLoginUrlFinished()
 
 void LoginDialog::pollLoginInfo()
 {
-    auto postData = QString("oauthKey=%1").arg(oauthKey).toUtf8();
-    httpReply = Network::Bili::postUrlEncoded("https://passport.bilibili.com/qrcode/getLoginInfo", postData);
+    auto postData = QString("qrcode_key=%1").arg(qrcode_key).toUtf8();
+    //httpReply = Network::Bili::postUrlEncoded("https://passport.bilibili.com/qrcode/getLoginInfo", postData);
+    httpReply = Network::Bili::get("https://passport.bilibili.com/x/passport-login/web/qrcode/poll?"+ postData);
     connect(httpReply, &QNetworkReply::finished, this, &LoginDialog::getLoginInfoFinished);
 }
 
@@ -150,18 +152,18 @@ void LoginDialog::getLoginInfoFinished()
     }
 
     bool isPollEnded = false;
-    if (data.isDouble()) {
-        switch (data.toInt()) {
-        case -1: // oauthKey is wrong. should never be this case
-            QMessageBox::critical(this, "", "oauthKey error");
+    if (data["code"].isDouble()&& data["code"].toInt()!=0) {
+        switch (data["code"].toInt()) {
+        case -1: // qrcode_key is wrong. should never be this case
+            QMessageBox::critical(this, "", "qrcode_key error");
             break;
-        case -2: // login url (qrcode) is expired
+        case 86038: // login url (qrcode) is expired
             isPollEnded = true;
             qrCodeExpired();
             break;
-        case -4: // qrcode not scanned
+        case 86101: // qrcode not scanned
             break;
-        case -5: // scanned but not confirmed
+        case 86090: // scanned but not confirmed
             tipLabel->setText("✅扫描成功<br>请在手机上确认");
             break;
         default:

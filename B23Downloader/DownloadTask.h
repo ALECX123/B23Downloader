@@ -45,7 +45,11 @@ signals:
 
 protected:
     QString path;
-    QNetworkReply *httpReply = nullptr;
+    QString m4sVideoPath;
+    QString m4sAudioPath;
+    QNetworkReply *videohttpReply = nullptr;
+    QNetworkReply *audiohttpReply = nullptr;
+    QNetworkReply* httpReply = nullptr;
     QJsonValue getReplyJson(const QString &dataKey = QString());
 
     // AbstractDownloadTask() = default;
@@ -178,15 +182,24 @@ protected:
     using AbstractVideoDownloadTask::AbstractVideoDownloadTask; // ctor
 
     std::unique_ptr<QFile> file;
+    std::unique_ptr<QFile> m4sVideofile;
+    std::unique_ptr<QFile> m4sAudiofile;
+
     std::unique_ptr<QFile> openFileForWrite();
+    std::unique_ptr<QFile> openFileForWrite(QString path);
 
     void parsePlayUrlInfo(const QJsonObject &data) override;
-    void startDownloadStream(const QUrl &url);
-    void onStreamReadyRead();
-    void onStreamFinished();
+    void startDownloadStream(const QUrl &url,bool audio);
+    void onAudioStreamReadyRead();
+    void onVideoStreamReadyRead();
+    void onAudioStreamFinished();
+    void onVideoStreamFinished();
 
     bool checkQn(int qnFromReply);
     bool checkSize(qint64 sizeFromReply);
+    bool videodownload = false;
+    bool audiodownload = false;
+    void Merge2Mp4();
 };
 
 class PgcDownloadTask : public VideoDownloadTask

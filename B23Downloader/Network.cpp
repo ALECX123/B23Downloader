@@ -4,7 +4,7 @@
 namespace Network
 {
 
-Q_GLOBAL_STATIC(QNetworkAccessManager, nam)
+Q_GLOBAL_STATIC(QNetworkAccessManager, nam)//= static QNetworkAccessManager nam;
 
 QNetworkAccessManager *accessManager()
 {
