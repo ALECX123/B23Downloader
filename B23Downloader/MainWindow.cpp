@@ -103,16 +103,24 @@ MainWindow::MainWindow(QWidget *parent)
 
 void MainWindow::closeEvent(QCloseEvent *event)
 {
-    auto dlg = QMessageBox(QMessageBox::Warning, "退出", "是否退出？", QMessageBox::NoButton, this);
-    dlg.addButton("确定", QMessageBox::AcceptRole);
-    dlg.addButton("取消", QMessageBox::RejectRole);
-    auto ret = dlg.exec();
-    if (ret == QMessageBox::AcceptRole) {
+    QMessageBox dlg(QMessageBox::Warning, "退出", "是否退出？", QMessageBox::NoButton, this);
+    QPushButton *btnOk = dlg.addButton("确定", QMessageBox::AcceptRole);
+    QPushButton *btnCancel = dlg.addButton("取消", QMessageBox::RejectRole);
+
+    dlg.exec();
+    QAbstractButton *clicked = dlg.clickedButton();
+
+    if (!clicked || clicked == btnCancel)
+    {
+        event->ignore();
+        return;
+    }
+
+    if (clicked == btnOk)
+    {
         taskTable->stopAll();
         taskTable->save();
         event->accept();
-    } else {
-        event->ignore();
     }
 }
 

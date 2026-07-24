@@ -384,7 +384,7 @@ TaskCellWidget::TaskCellWidget(AbstractDownloadTask *task, QWidget *parent)
 
     connect(task, &AbstractDownloadTask::getUrlInfoFinished, this, [this]{
        initProgressWidgets();
-       // titleLabel->setText(this->task->getTitle());
+       titleLabel->setText(this->task->getTitle());
        qnDescLabel->setText(this->task->getQnDescription());
        startCalcDownRate();
     });

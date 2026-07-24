@@ -1,1 +1,7 @@
 /*.pro.user*
+.vs
+build
+B23Downloader.sln
+B23Downloader.vcxproj.filters
+B23Downloader.vcxproj
+B23Downloader.vcxproj.user

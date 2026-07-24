@@ -95,7 +95,8 @@ protected:
     int durationInMSec = 0;
     int qn = 0; // quality (1080P, 720P, ...)
 
-    qint64 downloadedBytesCnt = 0; // bytes downloaded, or total bytes if finished
+    qint64 VideoDownloadedBytesCnt = 0; // bytes downloaded, or total bytes if finished
+    qint64 AudioDownloadedBytesCnt = 0; // bytes downloaded, or total bytes if finished
 
     AbstractVideoDownloadTask(const QString &path, int qn)
         : AbstractDownloadTask(path), qn(qn) {}
@@ -128,7 +129,7 @@ class LiveDownloadTask : public AbstractVideoDownloadTask
     QString basePath;
 
     std::unique_ptr<FlvLiveDownloadDelegate> dldDelegate;
-
+    qint64 downloadedBytesCnt = 0;
 public:
     const qint64 roomId;
 
@@ -162,8 +163,11 @@ class VideoDownloadTask : public AbstractVideoDownloadTask
 {
     Q_OBJECT
 
-    qint64 totalBytesCnt = 0;
+    qint64 VideoTotalBytesCnt = 0;
+    qint64 AudioTotalBytesCnt = 0;
 
+signals:
+    void Merge2Mp4Signal();
 public:
     void removeFile() override;
     int estimateRemainingSeconds(qint64 downBytesPerSec) const override;
@@ -185,8 +189,8 @@ protected:
     std::unique_ptr<QFile> m4sVideofile;
     std::unique_ptr<QFile> m4sAudiofile;
 
-    std::unique_ptr<QFile> openFileForWrite();
     std::unique_ptr<QFile> openFileForWrite(QString path);
+    std::unique_ptr<QFile> openFileForWriteImpl(const QString & filePath);
 
     void parsePlayUrlInfo(const QJsonObject &data) override;
     void startDownloadStream(const QUrl &url,bool audio);

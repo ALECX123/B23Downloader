@@ -5,6 +5,7 @@
 #include "Network.h"
 #include "utils.h"
 #include "Flv.h"
+#include <QApplication>
 #include <QtNetwork>
 
 // 127: 8K 超高清
@@ -113,7 +114,7 @@ AbstractVideoDownloadTask::~AbstractVideoDownloadTask() = default;
 
 qint64 AbstractVideoDownloadTask::getDownloadedBytesCnt() const
 {
-	return downloadedBytesCnt;
+	return VideoDownloadedBytesCnt + AudioDownloadedBytesCnt;
 }
 
 void AbstractVideoDownloadTask::startDownload()
@@ -142,16 +143,23 @@ QJsonObject VideoDownloadTask::toJsonObj() const
 	return QJsonObject{
 		{"path", path},
 		{"qn", qn},
-		{"bytes", downloadedBytesCnt},
-		{"total", totalBytesCnt}
+		{"video_bytes", VideoDownloadedBytesCnt},
+		{"audio_bytes", AudioDownloadedBytesCnt},
+
+		{"video_total", VideoTotalBytesCnt},
+		{"audio_total", AudioTotalBytesCnt}
 	};
 }
 
-VideoDownloadTask::VideoDownloadTask(const QJsonObject & json)
+VideoDownloadTask::VideoDownloadTask(const QJsonObject& json)
 	: AbstractVideoDownloadTask(json["path"].toString(), json["qn"].toInt())
 {
-	downloadedBytesCnt = json["bytes"].toInteger(0);
-	totalBytesCnt = json["total"].toInteger(0);
+	VideoDownloadedBytesCnt = json["video_bytes"].toInteger(0);
+	AudioDownloadedBytesCnt = json["audio_bytes"].toInteger(0);
+
+	VideoTotalBytesCnt = json["video_total"].toInteger(0);
+	AudioTotalBytesCnt = json["audio_total"].toInteger(0);
+	connect(this, &VideoDownloadTask::Merge2Mp4Signal, this, &VideoDownloadTask::Merge2Mp4);
 }
 
 void VideoDownloadTask::removeFile()
@@ -161,29 +169,29 @@ void VideoDownloadTask::removeFile()
 
 int VideoDownloadTask::estimateRemainingSeconds(qint64 downBytesPerSec) const
 {
-	if (downBytesPerSec == 0 || totalBytesCnt == 0) {
+	if (downBytesPerSec == 0 || VideoTotalBytesCnt == 0 || AudioTotalBytesCnt == 0) {
 		return -1;
 	}
-	qint64 ret = (totalBytesCnt - downloadedBytesCnt) / downBytesPerSec;
+	qint64 ret = (VideoTotalBytesCnt + AudioTotalBytesCnt - VideoDownloadedBytesCnt - AudioDownloadedBytesCnt) / downBytesPerSec;
 	return (ret > INT32_MAX ? -1 : static_cast<int>(ret));
 }
 
 double VideoDownloadTask::getProgress() const
 {
-	if (totalBytesCnt == 0) {
+	if (VideoTotalBytesCnt == 0 || AudioTotalBytesCnt == 0) {
 		return 0;
 	}
-	return static_cast<double>(downloadedBytesCnt) / totalBytesCnt;
+	return static_cast<double>(VideoDownloadedBytesCnt + AudioDownloadedBytesCnt) / (VideoTotalBytesCnt + AudioTotalBytesCnt);
 }
 
 QString VideoDownloadTask::getProgressStr() const
 {
-	if (totalBytesCnt == 0) {
+	if (VideoTotalBytesCnt == 0 || AudioDownloadedBytesCnt == 0) {
 		return QString();
 	}
 	return QStringLiteral("%1/%2").arg(
-		Utils::formattedDataSize(downloadedBytesCnt),
-		Utils::formattedDataSize(totalBytesCnt)
+		Utils::formattedDataSize(VideoDownloadedBytesCnt + AudioDownloadedBytesCnt),
+		Utils::formattedDataSize(VideoTotalBytesCnt + AudioTotalBytesCnt)
 	);
 }
 
@@ -202,7 +210,7 @@ QString VideoDownloadTask::getQnDescription() const
 	return getQnDescription(qn);
 }
 
-QnInfo VideoDownloadTask::getQnInfoFromPlayUrlInfo(const QJsonObject & data)
+QnInfo VideoDownloadTask::getQnInfoFromPlayUrlInfo(const QJsonObject& data)
 {
 	QnInfo qnInfo;
 	for (auto&& fmtValR : data["support_formats"].toArray()) {
@@ -221,7 +229,7 @@ QnInfo VideoDownloadTask::getQnInfoFromPlayUrlInfo(const QJsonObject & data)
 bool VideoDownloadTask::checkQn(int qnFromReply)
 {
 	if (qnFromReply != qn) {
-		if (downloadedBytesCnt == 0) {
+		if (VideoDownloadedBytesCnt == 0 || AudioDownloadedBytesCnt == 0) {
 			qn = qnFromReply;
 		}
 		else {
@@ -233,30 +241,38 @@ bool VideoDownloadTask::checkQn(int qnFromReply)
 	return true;
 }
 
-bool VideoDownloadTask::checkSize(qint64 sizeFromReply)
-{
-	if (totalBytesCnt != sizeFromReply) {
-		if (downloadedBytesCnt > 0) {
-			emit errorOccurred("获取到文件大小与先前不一致");
-			return false;
-		}
-		else {
-			totalBytesCnt = sizeFromReply;
-		}
-	}
-	return true;
-}
+namespace {
 
-void VideoDownloadTask::parsePlayUrlInfo(const QJsonObject & data)
+	struct SegmentBase
+	{
+		QString initialization;
+		QString indexRange;
+	};
+
+	struct VideoBaseUrl
+	{
+		int id = 0;
+		QUrl baseUrl;
+		int codecId = 0;
+		SegmentBase segmentBase;
+	};
+
+	struct AudioBaseUrl
+	{
+		int id = 0;
+		QUrl baseUrl;
+		SegmentBase segmentBase;
+	};
+
+} // anonymous namespace
+
+void VideoDownloadTask::parsePlayUrlInfo(const QJsonObject& data)
 {
-	if (jsonValue2Bool(data["is_preview"], 0)) {
-		if (!jsonValue2Bool(data["has_paid"], 1)) {
+	if (jsonValue2Bool(data["is_preview"], false)) {
+		if (!jsonValue2Bool(data["has_paid"], true)) {
 			emit errorOccurred("该视频需要大会员/付费");
 			return;
-		} /* else {
-			emit errorOccurred("该视频为预览");
-			return;
-		} */
+		}
 	}
 
 	auto qnInfo = getQnInfoFromPlayUrlInfo(data);
@@ -285,162 +301,99 @@ void VideoDownloadTask::parsePlayUrlInfo(const QJsonObject & data)
 		30280	192K
 		30250	杜比全景声
 		30251	Hi - Res无损*/
+	QList<VideoBaseUrl> videoBaseUrlList;
+	QList<AudioBaseUrl> audioBaseUrlList;
 
-	struct SegmentBase
-	{
-		QString Initialization;
-		QString indexRange;
-	};
-
-	struct VideoBaseUrl
-	{
-		int id = 0;
-		QUrl baseUrl;
-		int codecid = 0;
-		SegmentBase segment_base;
-	};
-
-	struct AudioBaseUrl
-	{
-		int id = 0;
-		QUrl baseUrl;
-		SegmentBase segment_base;
-	};
-
-	QList<VideoBaseUrl> VideoBaseUrlList;
-	QList<AudioBaseUrl> AudioBaseUrlList;
-
-	for (int i = 0; i < video.size(); ++i) {
-		QJsonObject value = video.at(i).toObject();
+	for (const auto& valueRef : video) {
+		const auto value = valueRef.toObject();
 		VideoBaseUrl vbu;
 		vbu.id = value["id"].toInt();
-		vbu.codecid = value["codecid"].toInt();
-		if (vbu.codecid == 12)
+		vbu.codecId = value["codecid"].toInt();
+		if (vbu.codecId == 12) // skip HEVC
 			continue;
 		vbu.baseUrl = value["baseUrl"].toString();
-		SegmentBase sb;
-		QJsonObject sbobj = value["SegmentBase"].toObject();
-		sb.indexRange = sbobj["indexRange"].toString();
-		sb.Initialization = sbobj["Initialization"].toString();
-		VideoBaseUrlList.append(vbu);
+		const auto sbObj = value["SegmentBase"].toObject();
+		vbu.segmentBase.indexRange = sbObj["indexRange"].toString();
+		vbu.segmentBase.initialization = sbObj["Initialization"].toString();
+		videoBaseUrlList.append(vbu);
 	}
-	for (int i = 0; i < audio.size(); ++i) {
-		QJsonObject value = audio.at(i).toObject();
+	for (const auto& valueRef : audio) {
+		const auto value = valueRef.toObject();
 		AudioBaseUrl vbu;
 		vbu.id = value["id"].toInt();
 		vbu.baseUrl = value["baseUrl"].toString();
-		SegmentBase sb;
-		QJsonObject sbobj = value["SegmentBase"].toObject();
-		sb.indexRange = sbobj["indexRange"].toString();
-		sb.Initialization = sbobj["Initialization"].toString();
-		AudioBaseUrlList.append(vbu);
+		const auto sbObj = value["SegmentBase"].toObject();
+		vbu.segmentBase.indexRange = sbObj["indexRange"].toString();
+		vbu.segmentBase.initialization = sbObj["Initialization"].toString();
+		audioBaseUrlList.append(vbu);
 	}
 
-	//auto baseurlList = video.first().toObject();
-	//qDebug() << baseurlList;
-	//QStringList keyList = data.keys();
-	//for (QString key : keyList) {
-	//	qDebug() << key << data[key];
-	//}
-	if (video.size() == 0) {
+	if (video.isEmpty()) {
 		emit errorOccurred("请求错误: video 为空");
 		return;
 	}
-	//else if (video.size() > 1) {
-	//	emit errorOccurred("该视频当前画质有分段(不支持)");
-	//	return;
-	//}
 
-	//auto videoObj = video.first().toObject();
-	//获取文件大小
-	//if (!checkSize(videoObj["size"].toInteger())) {
-	//	return;
-	//}
-	QUrl videostreamurl;
-	QUrl audiostreamurl;
-	for (auto& var : VideoBaseUrlList)
-	{
-		if (var.id == qnInfo.currentQn)
-		{
-			videostreamurl = var.baseUrl;
+	QUrl videoStreamUrl;
+	QUrl audioStreamUrl;
+	for (const auto& entry : videoBaseUrlList) {
+		if (entry.id == qnInfo.currentQn) {
+			videoStreamUrl = entry.baseUrl;
 			break;
 		}
 	}
-	for (auto& var : AudioBaseUrlList)
-	{
-		if (var.id == qnInfo.currentQn + 30200)
-		{
-			audiostreamurl = var.baseUrl;
+	for (const auto& entry : audioBaseUrlList) {
+		if (entry.id == qnInfo.currentQn + 30200) {
+			audioStreamUrl = entry.baseUrl;
 			break;
 		}
 	}
-	if (videostreamurl.isEmpty() ||
-		audiostreamurl.isEmpty())
-	{
+	if (videoStreamUrl.isEmpty() || audioStreamUrl.isEmpty()) {
 		emit errorOccurred("url empty");
 		return;
 	}
-	//auto durationInMSec = videoObj["length"].toInt();
-	startDownloadStream(videostreamurl, false);
-	startDownloadStream(audiostreamurl, true);
+
+	VideoDownloadedBytesCnt = 0;
+	AudioDownloadedBytesCnt = 0;
+	startDownloadStream(videoStreamUrl, false);
+	startDownloadStream(audioStreamUrl, true);
 }
 
-std::unique_ptr<QFile> VideoDownloadTask::openFileForWrite()
+std::unique_ptr<QFile> VideoDownloadTask::openFileForWrite(QString filePath)
 {
-	auto dir = QFileInfo(path).absolutePath();
+	auto file = openFileForWriteImpl(filePath);
+	if (!file)
+		return nullptr;
+	return file;
+}
+
+std::unique_ptr<QFile> VideoDownloadTask::openFileForWriteImpl(const QString& filePath)
+{
+	auto dir = QFileInfo(filePath).absolutePath();
+	qDebug() << filePath;
 	if (!QFileInfo::exists(dir)) {
 		if (!QDir().mkpath(dir)) {
+			qDebug() << dir;
 			emit errorOccurred("创建目录失败");
 			return nullptr;
 		}
 	}
 
-	auto file = std::make_unique<QFile>(path);
-	// WriteOnly: QFile implies Truncate (All earlier contents are lost)
-	//              unless combined with ReadOnly, Append or NewOnly.
+	auto file = std::make_unique<QFile>(filePath);
 	if (!file->open(QIODevice::ReadWrite)) {
 		emit errorOccurred("打开文件失败");
 		return nullptr;
 	}
-
-	auto fileSize = file->size();
-	if (fileSize < downloadedBytesCnt) {
-		qDebug() << QString("filesize(%1) < bytes(%2)").arg(fileSize).arg(downloadedBytesCnt);
-		downloadedBytesCnt = fileSize;
-	}
-	file->seek(downloadedBytesCnt);
 	return file;
 }
 
-std::unique_ptr<QFile> VideoDownloadTask::openFileForWrite(QString path)
-{
-	auto dir = QFileInfo(path).absolutePath();
-	if (!QFileInfo::exists(dir)) {
-		if (!QDir().mkpath(dir)) {
-			emit errorOccurred("创建目录失败");
-			return nullptr;
-		}
-	}
-
-	auto file = std::make_unique<QFile>(path);
-	// WriteOnly: QFile implies Truncate (All earlier contents are lost)
-	//              unless combined with ReadOnly, Append or NewOnly.
-	if (!file->open(QIODevice::ReadWrite)) {
-		emit errorOccurred("打开文件失败");
-		return nullptr;
-	}
-	downloadedBytesCnt = 0;
-	return file;
-}
-
-void VideoDownloadTask::startDownloadStream(const QUrl & url, bool audio)
+void VideoDownloadTask::startDownloadStream(const QUrl& url, bool audio)
 {
 	emit getUrlInfoFinished();
 
 	// check extension of filename
 	auto ext = Utils::fileExtension(url.fileName());
 	if (audio) {
-		if (downloadedBytesCnt == 0 && !m4sAudioPath.endsWith(ext, Qt::CaseInsensitive))
+		if (AudioDownloadedBytesCnt == 0 && !m4sAudioPath.endsWith(ext, Qt::CaseInsensitive))
 		{
 			m4sAudioPath = path + "Audio";
 			m4sAudioPath.append(ext);
@@ -451,7 +404,7 @@ void VideoDownloadTask::startDownloadStream(const QUrl & url, bool audio)
 	}
 	else
 	{
-		if (downloadedBytesCnt == 0 && !m4sVideoPath.endsWith(ext, Qt::CaseInsensitive))
+		if (VideoDownloadedBytesCnt == 0 && !m4sVideoPath.endsWith(ext, Qt::CaseInsensitive))
 		{
 			m4sVideoPath = path + "Video";
 			m4sVideoPath.append(ext);
@@ -461,9 +414,6 @@ void VideoDownloadTask::startDownloadStream(const QUrl & url, bool audio)
 			return;
 	}
 	auto request = Network::Bili::Request(url);
-	if (downloadedBytesCnt != 0) {
-		//request.setRawHeader("Range", "bytes=" + QByteArray::number(downloadedBytesCnt) + "-");
-	}
 
 	if (audio)
 	{
@@ -478,11 +428,17 @@ void VideoDownloadTask::startDownloadStream(const QUrl & url, bool audio)
 		connect(videohttpReply, &QNetworkReply::finished, this, &VideoDownloadTask::onVideoStreamFinished);
 	}
 }
-#include <QApplication>
-void  VideoDownloadTask::Merge2Mp4()
+void VideoDownloadTask::Merge2Mp4()
 {
-	QString wz = " -i \"" + m4sAudioPath + +"\" -i \"" + m4sVideoPath + "\" -c:v copy -c:a copy -f mp4 -y \"" + path + ".mp4\"";
-	QProcess* process = new QProcess(this);;
+	if (!videodownload || !audiodownload)
+	{
+		return;
+	}
+
+	m4sAudiofile.reset();
+	m4sVideofile.reset();
+	QString wz = " -i \"" + m4sAudioPath + "\" -i \"" + m4sVideoPath + "\" -c:v copy -c:a copy -f mp4 -y \"" + path + ".mp4\"";
+	QProcess* process = new QProcess(this);
 	connect(process, &QProcess::readyReadStandardOutput, this, [process]() {
 		QString s = process->readAllStandardOutput();
 		qDebug() << s;
@@ -516,8 +472,6 @@ void VideoDownloadTask::onVideoStreamFinished()
 	videohttpReply->deleteLater();
 	videohttpReply = nullptr;
 
-	m4sVideofile.reset();
-
 	if (reply->error() == QNetworkReply::OperationCanceledError) {
 		return;
 	}
@@ -527,10 +481,7 @@ void VideoDownloadTask::onVideoStreamFinished()
 		return;
 	}
 	videodownload = true;
-	if (audiodownload == true)
-	{
-		Merge2Mp4();
-	}
+	emit Merge2Mp4Signal();
 }
 
 void VideoDownloadTask::onAudioStreamFinished()
@@ -538,8 +489,6 @@ void VideoDownloadTask::onAudioStreamFinished()
 	auto reply = audiohttpReply;
 	audiohttpReply->deleteLater();
 	audiohttpReply = nullptr;
-
-	m4sAudiofile.reset();
 
 	if (reply->error() == QNetworkReply::OperationCanceledError) {
 		return;
@@ -550,37 +499,35 @@ void VideoDownloadTask::onAudioStreamFinished()
 		return;
 	}
 	audiodownload = true;
-	if (videodownload == true)
-	{
-		Merge2Mp4();
-	}
+	emit Merge2Mp4Signal();
 }
 
 void VideoDownloadTask::onVideoStreamReadyRead()
 {
-	auto tmp = downloadedBytesCnt + videohttpReply->bytesAvailable();
-	totalBytesCnt = videohttpReply->header(QNetworkRequest::ContentLengthHeader).toInt();
+	auto tmp = VideoDownloadedBytesCnt + videohttpReply->bytesAvailable();
+	VideoTotalBytesCnt = videohttpReply->header(QNetworkRequest::ContentLengthHeader).toInt();
 	Q_ASSERT(m4sVideofile != nullptr);
 	if (-1 == m4sVideofile->write(videohttpReply->readAll())) {
 		emit errorOccurred("文件写入失败: " + m4sVideofile->errorString());
 		videohttpReply->abort();
 	}
 	else {
-		downloadedBytesCnt = tmp;
+		VideoDownloadedBytesCnt = tmp;
 	}
 }
 
 void VideoDownloadTask::onAudioStreamReadyRead()
 {
-	auto tmp = downloadedBytesCnt + audiohttpReply->bytesAvailable();
+	auto tmp = AudioDownloadedBytesCnt + audiohttpReply->bytesAvailable();
+	AudioTotalBytesCnt = audiohttpReply->header(QNetworkRequest::ContentLengthHeader).toInt();
 	Q_ASSERT(m4sAudiofile != nullptr);
 	if (-1 == m4sAudiofile->write(audiohttpReply->readAll())) {
 		emit errorOccurred("文件写入失败: " + m4sAudiofile->errorString());
 		audiohttpReply->abort();
 	}
-	//else {
-	//	downloadedBytesCnt = tmp;
-	//}
+	else {
+		AudioDownloadedBytesCnt = tmp;
+	}
 }
 
 
@@ -593,7 +540,7 @@ QJsonObject PgcDownloadTask::toJsonObj() const
 	return json;
 }
 
-PgcDownloadTask::PgcDownloadTask(const QJsonObject & json)
+PgcDownloadTask::PgcDownloadTask(const QJsonObject& json)
 	: VideoDownloadTask(json),
 	ssId(json["ssid"].toInteger()),
 	epId(json["epid"].toInteger())
@@ -630,7 +577,7 @@ QJsonObject PugvDownloadTask::toJsonObj() const
 	return json;
 }
 
-PugvDownloadTask::PugvDownloadTask(const QJsonObject & json)
+PugvDownloadTask::PugvDownloadTask(const QJsonObject& json)
 	: VideoDownloadTask(json),
 	ssId(json["ssid"].toInteger()),
 	epId(json["epid"].toInteger())
@@ -667,7 +614,7 @@ QJsonObject UgcDownloadTask::toJsonObj() const
 	return json;
 }
 
-UgcDownloadTask::UgcDownloadTask(const QJsonObject & json)
+UgcDownloadTask::UgcDownloadTask(const QJsonObject& json)
 	: VideoDownloadTask(json),
 	aid(json["aid"].toInteger()),
 	cid(json["cid"].toInteger())
@@ -714,7 +661,7 @@ QString LiveDownloadTask::getPlayUrlInfoDataKey() const
 	return playUrlInfoDataKey;
 }
 
-LiveDownloadTask::LiveDownloadTask(qint64 roomId, int qn, const QString & path)
+LiveDownloadTask::LiveDownloadTask(qint64 roomId, int qn, const QString& path)
 	: AbstractVideoDownloadTask(QString(), qn), basePath(path), roomId(roomId)
 {
 }
@@ -725,11 +672,6 @@ QJsonObject LiveDownloadTask::toJsonObj() const
 {
 	return QJsonObject();
 }
-
-//LiveDownloadTask::LiveDownloadTask(const QJsonObject &json)
-//{
-
-//}
 
 QString LiveDownloadTask::getTitle() const
 {
@@ -750,10 +692,10 @@ int LiveDownloadTask::estimateRemainingSeconds(qint64 downBytesPerSec) const
 
 QString LiveDownloadTask::getProgressStr() const
 {
-	if (downloadedBytesCnt == 0) {
+	if (VideoDownloadedBytesCnt == 0 || AudioDownloadedBytesCnt == 0) {
 		return QString();
 	}
-	return Utils::formattedDataSize(downloadedBytesCnt);
+	return Utils::formattedDataSize(VideoDownloadedBytesCnt + AudioDownloadedBytesCnt);
 }
 
 QnList LiveDownloadTask::getAllPossibleQn()
@@ -771,7 +713,7 @@ QString LiveDownloadTask::getQnDescription() const
 	return getQnDescription(qn);
 }
 
-QnInfo LiveDownloadTask::getQnInfoFromPlayUrlInfo(const QJsonObject & data)
+QnInfo LiveDownloadTask::getQnInfoFromPlayUrlInfo(const QJsonObject& data)
 {
 	QnInfo qnInfo;
 	auto infoObj = data["playurl_info"].toObject()["playurl"].toObject();
@@ -797,7 +739,7 @@ QnInfo LiveDownloadTask::getQnInfoFromPlayUrlInfo(const QJsonObject & data)
 	return qnInfo;
 }
 
-QString LiveDownloadTask::getPlayUrlFromPlayUrlInfo(const QJsonObject & data)
+QString LiveDownloadTask::getPlayUrlFromPlayUrlInfo(const QJsonObject& data)
 {
 	auto urlObj = data["playurl_info"].toObject()
 		["playurl"].toObject()
@@ -811,7 +753,7 @@ QString LiveDownloadTask::getPlayUrlFromPlayUrlInfo(const QJsonObject & data)
 	return host + baseUrl + extra;
 }
 
-void LiveDownloadTask::parsePlayUrlInfo(const QJsonObject & data)
+void LiveDownloadTask::parsePlayUrlInfo(const QJsonObject& data)
 {
 	if (data["live_status"].toInt() != 1) {
 		emit errorOccurred("未开播或正在轮播");
@@ -828,6 +770,7 @@ void LiveDownloadTask::parsePlayUrlInfo(const QJsonObject & data)
 	emit getUrlInfoFinished();
 
 	downloadedBytesCnt = 0;
+
 	httpReply = Network::Bili::get(url);
 	dldDelegate = std::make_unique<FlvLiveDownloadDelegate>(*httpReply, [this]() {
 		auto dateStr = QDateTime::currentDateTime().toString("[yyyy.MM.dd] hh.mm.ss");
@@ -885,7 +828,7 @@ QJsonObject ComicDownloadTask::toJsonObj() const
 	};
 }
 
-ComicDownloadTask::ComicDownloadTask(const QJsonObject & json)
+ComicDownloadTask::ComicDownloadTask(const QJsonObject& json)
 	: AbstractDownloadTask(json["path"].toString()),
 	comicId(json["id"].toInteger()),
 	epId(json["epid"].toInteger()),
@@ -898,9 +841,7 @@ ComicDownloadTask::ComicDownloadTask(const QJsonObject & json)
 void ComicDownloadTask::startDownload()
 {
 	auto getImgPathsUrl = "https://manga.bilibili.com/twirp/comic.v1.Comic/GetImageIndex?device=pc&platform=web";
-	//    auto postData = "{\"ep_id\":" + QByteArray::number(epid) + "}";
-	//    httpReply = Network::postJson(getImgPathsUrl, postData);
-	httpReply = Network::Bili::postJson(getImgPathsUrl, { {"ep_id", epId} });
+	httpReply = Network::Bili::postJson(getImgPathsUrl, QJsonObject({ {"ep_id", epId} }));
 	connect(httpReply, &QNetworkReply::finished, this, &ComicDownloadTask::getImgInfoFinished);
 }
 
@@ -970,7 +911,7 @@ void ComicDownloadTask::getImgTokenFinished()
 	connect(httpReply, &QNetworkReply::finished, this, &ComicDownloadTask::downloadImgFinished);
 }
 
-std::unique_ptr<QSaveFile> ComicDownloadTask::openFileForWrite(const QString & fileName)
+std::unique_ptr<QSaveFile> ComicDownloadTask::openFileForWrite(const QString& fileName)
 {
 	if (!QFileInfo::exists(path)) {
 		if (!QDir().mkpath(path)) {
@@ -1073,17 +1014,9 @@ int ComicDownloadTask::estimateRemainingSeconds(qint64 downBytesPerSec) const
 double ComicDownloadTask::getProgress() const
 {
 	if (totalImgCnt == 0) {
-		// new created. total Image count unknown
 		return 0;
 	}
-
 	return static_cast<double>(finishedImgCnt) / totalImgCnt;
-	//    double progress = static_cast<double>(finishedImgCnt * 100) / static_cast<double>(totalImgCnt);
-	//    if (curImgTotalBytesCnt != 0) {
-	//        int estimateTotalBytes = totalImgCnt * curImgTotalBytesCnt;
-	//        progress += static_cast<double>(curImgRecvBytesCnt * 100) / static_cast<double>(estimateTotalBytes);
-	//    }
-	//    return static_cast<int>(progress);
 }
 
 QString ComicDownloadTask::getProgressStr() const

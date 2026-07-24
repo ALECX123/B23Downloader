@@ -154,8 +154,7 @@ AboutWidget::AboutWidget(QWidget *parent)
         QStringLiteral("<h2>B23Downloader</h2>版本: v") + QApplication::applicationVersion() +
         QStringLiteral(
             "<br>本软件开源免费。"
-            "<br>项目链接: <a href=\"https://github.com/vooidzero/B23Downloader\">GitHub</a>"
-                " 或 <a href=\"https://git.nju.edu.cn/zero/B23Downloader\">NJU Git</a>"
+            "<br>项目链接: <a href=\"https://github.com/ALECX123/B23Downloader\">GitHub</a>"
         );
     auto infoLabel = new QLabel(info);
     infoLabel->setOpenExternalLinks(true);
@@ -206,9 +205,7 @@ AboutWidget::AboutWidget(QWidget *parent)
 void AboutWidget::showEvent(QShowEvent *event)
 {
     d->textView->setText(QStringLiteral(
-        "<center>こんなちいさな星座なのに</center>"
-        "<center>ここにいたこと 気付いてくれて</center>"
-        "<center>ありがとう！</center>"
+
     ));
     QWidget::showEvent(event);
 }
