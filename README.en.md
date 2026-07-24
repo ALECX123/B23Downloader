@@ -2,6 +2,10 @@
 
 A downloader for Bilibili videos, live streams and manga, built with Qt6. Supports UGC videos, PGC series (anime/movies/documentaries), PUGV courses, live recording and manga downloads.
 
+<p align="center">
+  <img src="./B23Downloader/icons/icon-96x96.png" alt="icon">
+</p>
+
 English | [简体中文](./README.md)
 
 ---
@@ -111,10 +115,9 @@ This project is open-sourced under the [GPL-3.0](./LICENSE) license.
 
 ## Acknowledgments
 
+- Derived from [vooidzero/B23Downloader](https://github.com/vooidzero/B23Downloader)
 - [Qt](https://www.qt.io/) — cross-platform application framework
 - [FFmpeg](https://ffmpeg.org/) — multimedia processing
 - Bilibili content providers
 
 ---
-
-> This project is for learning and communication purposes only and may not be used commercially. Copyright of downloaded content belongs to the respective owners; please delete within 24 hours.

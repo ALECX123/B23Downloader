@@ -2,6 +2,10 @@
 
 B 站（哔哩哔哩）视频/直播/漫画下载器，基于 Qt6 开发，支持 UGC 视频、PGC 剧集（番剧/电影/纪录片）、PUGV 课程、直播录像与漫画下载。
 
+<p align="center">
+  <img src="./B23Downloader/icons/icon-96x96.png" alt="icon">
+</p>
+
 [English](./README.en.md) | 简体中文
 
 ---
@@ -111,10 +115,9 @@ B23Downloader/
 
 ## 致谢
 
+- 本项目基于 [vooidzero/B23Downloader](https://github.com/vooidzero/B23Downloader) 衍生开发
 - [Qt](https://www.qt.io/) — 跨平台应用开发框架
 - [FFmpeg](https://ffmpeg.org/) — 多媒体处理
 - 哔哩哔哩用户提供的内容资源
 
 ---
-
-> 本项目仅供学习交流使用，不得用于商业用途。下载的内容版权归原所有者所有，请在 24 小时内删除。
