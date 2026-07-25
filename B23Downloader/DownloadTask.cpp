@@ -110,6 +110,12 @@ QJsonValue AbstractDownloadTask::getReplyJson(const QString& dataKey)
 
 
 
+AbstractVideoDownloadTask::AbstractVideoDownloadTask(const QString& path, int qn)		
+	: AbstractDownloadTask(path), qn(qn)
+{
+	connect(this, &AbstractVideoDownloadTask::Merge2Mp4Signal, this, &AbstractVideoDownloadTask::Merge2Mp4);
+}
+
 AbstractVideoDownloadTask::~AbstractVideoDownloadTask() = default;
 
 qint64 AbstractVideoDownloadTask::getDownloadedBytesCnt() const
@@ -159,7 +165,6 @@ VideoDownloadTask::VideoDownloadTask(const QJsonObject& json)
 
 	VideoTotalBytesCnt = json["video_total"].toInteger(0);
 	AudioTotalBytesCnt = json["audio_total"].toInteger(0);
-	connect(this, &VideoDownloadTask::Merge2Mp4Signal, this, &VideoDownloadTask::Merge2Mp4);
 }
 
 void VideoDownloadTask::removeFile()
@@ -430,9 +435,12 @@ void VideoDownloadTask::startDownloadStream(const QUrl& url, bool audio)
 }
 void VideoDownloadTask::Merge2Mp4()
 {
-	if (!videodownload || !audiodownload)
 	{
-		return;
+		std::lock_guard<QMutex>locker(download_locker);
+		if (!videodownload || !audiodownload)
+		{
+			return;
+		}
 	}
 
 	m4sAudiofile.reset();
@@ -460,7 +468,7 @@ void VideoDownloadTask::Merge2Mp4()
 	process->setProcessChannelMode(QProcess::MergedChannels);
 	qDebug() << str;
 	process->start(str);
-	if (!process->waitForStarted()) {
+	if (!process->waitForFinished()) {
 		emit errorOccurred(QString("Merge2Mp4 failed:%1").arg(process->errorString()));
 		qDebug() << "start failed:" << process->errorString();
 	}
@@ -480,7 +488,11 @@ void VideoDownloadTask::onVideoStreamFinished()
 		emit errorOccurred("网络请求错误");
 		return;
 	}
-	videodownload = true;
+	{
+		std::lock_guard<QMutex>locker(download_locker);
+		videodownload = true;
+
+	}
 	emit Merge2Mp4Signal();
 }
 
@@ -498,7 +510,10 @@ void VideoDownloadTask::onAudioStreamFinished()
 		emit errorOccurred("网络请求错误");
 		return;
 	}
-	audiodownload = true;
+	{
+		std::lock_guard<QMutex>locker(download_locker);
+		audiodownload = true;
+	}
 	emit Merge2Mp4Signal();
 }
 
